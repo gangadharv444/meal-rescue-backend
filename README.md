@@ -2,6 +2,8 @@
 
 A modular Express.js backend for the Meal Rescue application.
 
+**Live App:** [https://meal-rescue-planner-frontend-cxgj.vercel.app/](https://meal-rescue-planner-frontend-cxgj.vercel.app/)
+
 ## Project Structure
 
 ```
@@ -36,8 +38,8 @@ npm install
 ### 2. Configure Environment Variables
 Create a `.env` file in the root directory with:
 ```
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
+MONGODB_URI=your_mongodb_atlas_uri
+JWT_SECRET=your_jwt_secret_key
 WEATHER_API_KEY=your_weather_api_key
 GEMINI_API_KEY=your_gemini_api_key
 PORT=3001
