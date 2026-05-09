@@ -1,15 +1,15 @@
 require('dotenv').config();
 
 const config = {
-    supabaseUrl: process.env.SUPABASE_URL,
-    supabaseKey: process.env.SUPABASE_KEY,
+    mongoUri: process.env.MONGODB_URI,
+    jwtSecret: process.env.JWT_SECRET || 'fallback_secret_for_development',
     weatherApiKey: process.env.WEATHER_API_KEY,
     geminiApiKey: process.env.GEMINI_API_KEY,
     port: process.env.PORT || 3001,
 };
 
-if (!config.supabaseUrl || !config.supabaseKey) {
-    console.error('Missing Supabase configuration. Check your .env file.');
+if (!config.mongoUri) {
+    console.error('Missing MONGODB_URI configuration. Check your .env file.');
     process.exit(1);
 }
 

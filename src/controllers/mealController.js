@@ -1,86 +1,109 @@
 const axios = require('axios');
 const config = require('../config/env');
-const { getSupabase } = require('../middleware/auth');
-const supabase = getSupabase();
+const Meal = require('../models/Meal');
+const DefaultMeal = require('../models/DefaultMeal');
+const Preference = require('../models/Preference');
 
 const createMeal = async (req, res) => {
-    const user = req.user;
-    const { mealName, Tags } = req.body;
-    if (!mealName) return res.status(400).json({ error: 'Meal name is required.' });
+    try {
+        const user = req.user;
+        const { mealName, Tags } = req.body;
+        if (!mealName) return res.status(400).json({ error: 'Meal name is required.' });
 
-    const { data: newMeal, error } = await supabase
-        .from('meal')
-        .insert({ meal_name: mealName, user_id: user.id, Tags: Tags })
-        .select()
-        .single();
+        const newMeal = new Meal({
+            meal_name: mealName,
+            user_id: user.id,
+            Tags: Tags || []
+        });
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(newMeal);
+        await newMeal.save();
+
+        // Standardize output to match expected frontend structure id -> _id
+        const mealObj = newMeal.toObject();
+        mealObj.id = mealObj._id.toString();
+        
+        res.status(201).json(mealObj);
+    } catch (error) {
+        console.error('Error creating meal:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
 };
 
 const getMeals = async (req, res) => {
-    const user = req.user;
-    const { data: meals, error } = await supabase
-        .from('meal')
-        .select('*')
-        .eq('user_id', user.id)
-        .not('Tags', 'cs', '{"system_hidden"}'); // Filter out system hidden meals
+    try {
+        const user = req.user;
+        const meals = await Meal.find({
+            user_id: user.id,
+            Tags: { $nin: ['cs', 'system_hidden'] }
+        });
 
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(meals);
+        // Map _id to id for frontend compatibility
+        const mappedMeals = meals.map(m => {
+            const obj = m.toObject();
+            obj.id = obj._id.toString();
+            return obj;
+        });
+
+        res.json(mappedMeals);
+    } catch (error) {
+        console.error('Error getting meals:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
 };
 
 const updateMeal = async (req, res) => {
-    const user = req.user;
-    const mealId = req.params.id;
-    const { mealName, Tags } = req.body;
+    try {
+        const user = req.user;
+        const mealId = req.params.id;
+        const { mealName, Tags } = req.body;
 
-    const updateData = {};
-    if (mealName) updateData.meal_name = mealName;
-    if (Tags) updateData.Tags = Tags;
+        const updateData = {};
+        if (mealName) updateData.meal_name = mealName;
+        if (Tags) updateData.Tags = Tags;
 
-    const { data: updatedMeal, error } = await supabase
-        .from('meal')
-        .update(updateData)
-        .eq('user_id', user.id)
-        .eq('id', mealId)
-        .select()
-        .single();
+        const updatedMeal = await Meal.findOneAndUpdate(
+            { _id: mealId, user_id: user.id },
+            updateData,
+            { new: true }
+        );
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (!updatedMeal) return res.status(404).json({ error: 'Meal not found or permission denied.' });
-    res.json(updatedMeal);
+        if (!updatedMeal) return res.status(404).json({ error: 'Meal not found or permission denied.' });
+        
+        const mealObj = updatedMeal.toObject();
+        mealObj.id = mealObj._id.toString();
+
+        res.json(mealObj);
+    } catch (error) {
+        console.error('Error updating meal:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
 };
 
 const deleteMeal = async (req, res) => {
-    const user = req.user;
-    const mealId = req.params.id;
+    try {
+        const user = req.user;
+        const mealId = req.params.id;
 
-    const { error, count } = await supabase
-        .from('meal')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('id', mealId);
+        const deleted = await Meal.findOneAndDelete({ _id: mealId, user_id: user.id });
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (count === 0) return res.status(404).json({ error: 'Meal not found or permission denied.' });
-    res.status(200).json({ message: 'Meal successfully deleted.' });
+        if (!deleted) return res.status(404).json({ error: 'Meal not found or permission denied.' });
+        res.status(200).json({ message: 'Meal successfully deleted.' });
+    } catch (error) {
+        console.error('Error deleting meal:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
 };
 
 const getDefaultMeals = async (req, res) => {
-    const { tag } = req.query;
-    if (!tag) return res.status(400).json({ error: 'A tag (spicy, sweet, or salty) is required.' });
-
     try {
-        const { data: meals, error } = await supabase
-            .from('default_meals')
-            .select('meal_name, Tags')
-            .contains('Tags', [tag]);
+        const { tag } = req.query;
+        if (!tag) return res.status(400).json({ error: 'A tag (spicy, sweet, or salty) is required.' });
 
-        if (error) throw error;
+        const meals = await DefaultMeal.find({ Tags: { $in: [tag] } }, 'meal_name Tags');
         res.json(meals);
     } catch (error) {
-        res.status(500).json({ error: 'Failed to get default meals.', details: error.message });
+        console.error('Error getting default meals:', error);
+        res.status(500).json({ error: 'Server error' });
     }
 };
 
@@ -111,34 +134,29 @@ const getWeatherSuggestion = async (req, res) => {
         }
 
         // Base Query
-        let query = supabase
-            .from('meal')
-            .select('*')
-            .eq('user_id', user.id)
-            .contains('Tags', [timePeriod]);
-
-        // Apply Diet Filter directly in DB if possible (for Vegetarian)
+        const query = { user_id: user.id, Tags: { $in: [timePeriod] } };
+        
         if (dietType === 'vegetarian') {
-            query = query.contains('Tags', ['vegetarian']);
+            query.Tags.$all = [timePeriod, 'vegetarian']; // Need both timePeriod and vegetarian
         }
 
-        const { data: meals, error: mealError } = await query;
+        let rawMeals = await Meal.find(query);
+        let meals = rawMeals.map(m => {
+            const obj = m.toObject();
+            obj.id = obj._id.toString();
+            return obj;
+        });
 
-        if (mealError) throw mealError;
-
-        // Apply Negative Filters in JS (Supabase negation on array contents is tricky)
-        let filteredMeals = meals;
+        // Apply Negative Filters
         if (dietType === 'non-vegetarian') {
-            filteredMeals = meals.filter(m => !m.Tags.includes('vegetarian'));
+            meals = meals.filter(m => !m.Tags.includes('vegetarian'));
         }
 
-        // If no meals for this time/diet, we can't suggest anything useful
-        if (!filteredMeals || filteredMeals.length === 0) {
+        if (!meals || meals.length === 0) {
             return res.status(404).json({ message: `No ${dietType} meals found for ${timePeriod}. Add some first!` });
         }
 
-        // Update variable reference for subsequent logic
-        const finalMeals = filteredMeals;
+        const finalMeals = meals;
 
         // --- AI LOGIC START ---
         if (config.geminiApiKey && config.geminiApiKey !== 'YOUR_GEMINI_API_KEY_HERE') {
@@ -176,14 +194,10 @@ const getWeatherSuggestion = async (req, res) => {
         }
         // --- AI LOGIC END ---
 
-        // Fallback Logic (Original Rule-Based)
+        // Fallback Logic
         console.log('Using rule-based fallback');
-
         let weatherSearchTags = [];
-        let weatherMain = '';
-        if (weather.weather && weather.weather.length > 0) {
-            weatherMain = weather.weather[0].main;
-        }
+        let weatherMain = weather.weather && weather.weather.length > 0 ? weather.weather[0].main : '';
 
         if (weatherMain === 'Rain' || weatherMain === 'Drizzle' || temp < 20) {
             weatherSearchTags = ['soup', 'spicy', 'rice', 'hot', 'comfort food'];
@@ -193,30 +207,23 @@ const getWeatherSuggestion = async (req, res) => {
             weatherSearchTags = ['quick', 'vegetarian', 'chicken', 'salty'];
         }
 
-        // Filter valid candidates from the already fetched time-based meals
         let candidates = finalMeals.filter(m => m.Tags && m.Tags.some(t => weatherSearchTags.includes(t)));
 
-        // Exclude the meal if ID matches
         if (excludeMealId) {
-            candidates = candidates.filter(m => m.id.toString() !== excludeMealId);
+            candidates = candidates.filter(m => m.id !== excludeMealId);
         }
 
-        // If no weather match, fallback to any meal from that time
         if (candidates.length === 0) {
             candidates = finalMeals;
-            if (excludeMealId) candidates = candidates.filter(m => m.id.toString() !== excludeMealId);
+            if (excludeMealId) candidates = candidates.filter(m => m.id !== excludeMealId);
         }
 
-        // If still empty, reset
         if (candidates.length === 0) candidates = finalMeals;
 
         const randomMeal = candidates[Math.floor(Math.random() * candidates.length)];
         res.json({ ...randomMeal, reasoning: `It's ${temp}°C and ${weatherDesc}, so we picked this for you!`, ai_powered: false });
 
     } catch (error) {
-        if (error.response && error.response.status === 401) {
-            return res.status(500).json({ error: 'Weather API Error', details: 'Invalid OpenWeatherMap API key.' });
-        }
         console.error('Weather Suggestion Failed:', error);
         res.status(500).json({ error: 'Failed to get suggestion.', details: error.message });
     }
@@ -225,42 +232,31 @@ const getWeatherSuggestion = async (req, res) => {
 const generatePlan = async (req, res) => {
     const user = req.user;
     try {
-        const { data: preferences, error: prefError } = await supabase
-            .from('user_preferences')
-            .select('*')
-            .eq('user_id', user.id)
-            .single();
-
-        if (prefError && prefError.code !== 'PGRST116') throw prefError;
-
-        const noRepeatDays = preferences?.no_repeat_days || 7;
-        const themeDays = preferences?.theme_days || {};
+        const pref = await Preference.findOne({ user_id: user.id });
+        const noRepeatDays = pref?.no_repeat_days || 7;
+        const themeDays = pref?.theme_days || {};
 
         const dietType = req.query.dietType || 'anything';
 
-        let query = supabase
-            .from('meal')
-            .select('*')
-            .eq('user_id', user.id);
-
+        let query = { user_id: user.id };
         if (dietType === 'vegetarian') {
-            query = query.contains('Tags', ['vegetarian']);
+            query.Tags = { $in: ['vegetarian'] };
         }
 
-        const { data: rawMeals, error: mealError } = await query;
+        const rawMeals = await Meal.find(query);
+        let allMeals = rawMeals.map(m => {
+            const obj = m.toObject();
+            obj.id = obj._id.toString();
+            return obj;
+        });
 
-        if (mealError) throw mealError;
-
-        let allMeals = rawMeals;
         if (dietType === 'non-vegetarian') {
-            allMeals = rawMeals.filter(m => !m.Tags.includes('vegetarian'));
+            allMeals = allMeals.filter(m => !m.Tags.includes('vegetarian'));
         }
 
         if (!allMeals || allMeals.length === 0) {
             return res.status(404).json({ error: `No ${dietType} meals found to generate a plan.` });
         }
-
-
 
         const fullPlan = [];
         let usedMealIds = [];
